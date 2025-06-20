@@ -1,0 +1,9 @@
+# requirements.txt
+
+selenium==4.33.0          # browser automation
+beautifulsoup4==4.12.3    # parse HTML for links
+requests==2.32.3          # HTTP APIs / PDFs
+lxml==5.4.0               # use latest version with available pre-built wheels
+PyPDF2==3.0.1             # PDF page counting
+pandas
+python-docx

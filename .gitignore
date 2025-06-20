@@ -1,0 +1,18 @@
+# Ignore virtual environments
+.venv/
+env/
+
+# Ignore CSV/Excel outputs
+*.csv
+*.xlsx
+
+# Ignore browser drivers (optional)
+chromedriver.exe
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore html and learning area notes
+html/
+Understanding of learning area/
