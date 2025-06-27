@@ -1,0 +1,106 @@
+# Project Title
+
+**Automated Data Extraction and PDF Analysis from Australian Curriculum**
+
+---
+
+## Project Overview
+
+This project involves automated extraction and processing of structured data from the Australian Curriculum website. It systematically crawls web pages, captures relevant educational content, generates PDFs, calculates page counts, and updates CSV files with detailed metadata.
+
+## Project Structure
+
+```
+project/
+├── data/
+│   └── (structured subject and year-wise PDF outputs)
+├── html/
+│   └── (saved HTML pages per subject and year)
+├── CombinedResults.csv
+├── CombinedResults_with_pagecounts.csv
+├── FinalData.csv
+├── content-description-extractor.py
+├── description-achievement-crawler.py
+├── nested_subjects_crawler.py
+├── single_subjects_crawler.py
+├── understanding-subject.py
+└── README.md
+```
+
+## Scripts and Functionalities
+
+### 1. **nested\_subjects\_crawler.py**
+
+* Crawls nested educational subjects (e.g., Languages, Arts, Technologies).
+* Stores HTML outputs and updates CSV metadata.
+
+### 2. **single\_subjects\_crawler.py**
+
+* Crawls single-level subjects (e.g., English, Mathematics).
+* Outputs HTML and CSV data files.
+
+### 3. **understanding-subject.py**
+
+* Extracts detailed information about subjects.
+* Converts extracted HTML to structured PDFs.
+
+### 4. **description-achievement-crawler.py**
+
+* Captures "Description" and "Achievement" standards from each subject's curriculum page.
+* Generates PDFs and records word counts.
+
+### 5. **content-description-extractor.py**
+
+* Extracts comprehensive content descriptions, processes HTML into structured PDFs.
+* Optimized for performance with minimized resource usage.
+
+## How to Run
+
+### Step-by-Step
+
+1. **Setup Environment:**
+
+```bash
+pip install selenium PyPDF2 pandas beautifulsoup4 reportlab
+```
+
+2. **Run Crawlers:**
+
+```bash
+python nested_subjects_crawler.py
+python single_subjects_crawler.py
+```
+
+3. **Extract and Generate PDFs:**
+
+```bash
+python understanding-subject.py
+python description-achievement-crawler.py
+python content-description-extractor.py
+```
+
+4. **Process CSV for Page Counts:**
+
+```bash
+python your_page_count_script.py
+```
+
+## Outputs
+
+* HTML snapshots of the curriculum web pages.
+* Structured PDFs categorized by subjects and academic years.
+* CSV files updated with accurate metadata and page counts.
+
+## Dependencies
+
+* Python 3.8+
+* Selenium
+* PyPDF2
+* pandas
+* BeautifulSoup4
+* ReportLab
+
+## Contributing
+
+Contributions are welcome. Please create a pull request for any improvements or feature enhancements.
+

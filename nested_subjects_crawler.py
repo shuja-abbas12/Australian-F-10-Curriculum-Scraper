@@ -23,7 +23,7 @@ from selenium.common.exceptions import TimeoutException, ElementClickIntercepted
 # ─── CONSTANTS ────────────────────────────────────────────────
 HOME_URL  = "https://v9.australiancurriculum.edu.au/"
 HTML_DIR  = pathlib.Path("html"); HTML_DIR.mkdir(exist_ok=True)
-CSV_PATH  = pathlib.Path("data.csv")
+CSV_PATH  = pathlib.Path("FinalData.csv")
 
 YEARS = {
     "foundationYear": "Foundation Year", "year1": "Year 1", "year2": "Year 2",

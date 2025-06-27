@@ -1,84 +1,149 @@
+#!/usr/bin/env python3
 """
-add_understanding_column.py
-───────────────────────────
-• Loads FinalData.csv (expects columns: Subject, Year, URL)
-• Scans ./Understanding of learning area/*.docx
-• For each row, finds the best-matching .docx by subject name:
-      1. exact match (ignoring spaces / case)
-      2. any two-word sequence match
-      3. first word match
-• Extracts ALL paragraph text from the .docx
-• Writes it into a new column "Understanding of the subject"
-• Overwrites FinalData.csv in-place
+Batch scraper — identical per-row logic used for rows 0 & 1,
+now applied to every row in FinalData.csv
 """
-import os, unicodedata, re
+
+from __future__ import annotations
+import re, textwrap, traceback, contextlib, sys, time
+from pathlib import Path
 import pandas as pd
-from docx import Document
-from datetime import datetime, UTC
+from bs4 import BeautifulSoup, element as bs4
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen.canvas import Canvas
+from PyPDF2 import PdfReader
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-CSV_PATH   = "FinalData.csv"
-DOCX_DIR   = "Understanding of learning area"
-NEW_COL    = "Understanding of the subject"
+# ── constants ──────────────────────────────────────────────
+CSV_FILE      = Path("FinalData.csv")
+DATA_DIR      = Path("data")
+HEADLESS      = False          # show Chrome
+PAGE_TIMEOUT  = 35
+WAIT          = 15
+BASE_PT       = 10
+WRAP          = 90
+MARGIN        = 40
+LINE_SP       = 1.4
+COL           = "Understanding of the learning area"
+SEGMENT       = "/curriculum-information/understand-this-learning-area/"
 
-# ── helper functions ───────────────────────────────────────────
-def normalise(txt: str) -> str:
-    return unicodedata.normalize("NFKD", txt).encode("ascii","ignore").decode()
+FONT = {
+    "h1": ("Helvetica-Bold",18), "h2": ("Helvetica-Bold",16),
+    "h3": ("Helvetica-Bold",14), "h4": ("Helvetica-Bold",12),
+    "h5": ("Helvetica-Bold",11), "h6": ("Helvetica-Bold",10),
+}
+DEF_FONT = ("Helvetica", BASE_PT); BULLET = ("Helvetica-Bold", BASE_PT)
+WRE = re.compile(r"\b[\w'-]+\b", re.UNICODE)
+slug = lambda s: re.sub(r"[\\/:'\"*?<>|]+", "_", str(s).strip())
+say  = lambda m: print(m, flush=True)
 
-def match_docx(subject: str, docx_list):
-    """Return best matching .docx filename or None."""
-    subj_norm = normalise(subject).lower()
-    subj_key  = subj_norm.replace(" ", "")
+# ── selenium helpers ──────────────────────────────────────
+def start_drv():
+    o = Options()
+    if HEADLESS: o.add_argument("--headless=new")
+    o.add_argument("--window-size=1400,1000")
+    return webdriver.Chrome(options=o)
 
-    # 1) exact (no spaces)
-    for fn in docx_list:
-        name_key = normalise(os.path.splitext(fn)[0]).lower().replace(" ", "")
-        if name_key == subj_key:
-            return fn
+def ready(d): return d.execute_script("return document.readyState")=="complete"
 
-    words = subj_norm.split()
+def locate_cta(d):
+    sel=("section.SlideOut.UnderstandArea-slideOut.is-open "
+         "div>div>a.Button--external")
+    return WebDriverWait(d,5).until(EC.element_to_be_clickable((By.CSS_SELECTOR,sel)))
 
-    # 2) two-word sequence
-    if len(words) >= 2:
-        for fn in docx_list:
-            fn_norm = normalise(fn).lower()
-            for i in range(len(words)-1):
-                if f"{words[i]} {words[i+1]}" in fn_norm:
-                    return fn
+def expand_all(d):
+    for b in d.find_elements(
+            By.CSS_SELECTOR,
+            "section.ContentToggle:not(.is-open) > header > button, "
+            "button[aria-expanded='false']"):
+        with contextlib.suppress(Exception):
+            d.execute_script("arguments[0].click()", b); time.sleep(.05)
 
-    # 3) first-word fallback
-    first = words[0]
-    for fn in docx_list:
-        if first in normalise(fn).lower():
-            return fn
-    return None
+# ── extract helpers ───────────────────────────────────────
+def _clean(n):
+    for t in n(["script","style","noscript","iframe","nav"]): t.decompose()
+    for t in n.find_all(lambda x:isinstance(x,bs4.Tag) and (
+            x.get("aria-hidden")=="true" or "display:none" in (x.get("style") or ""))):
+        t.decompose()
 
-def extract_docx_text(path):
-    doc = Document(path)
-    return "\n".join(p.text for p in doc.paragraphs)
+def _yield(main):
+    for t in main.descendants:
+        if isinstance(t,bs4.Tag) and t.name in {"h1","h2","h3","h4","h5","h6","p","li","blockquote"}:
+            txt=" ".join(t.get_text(" ",strip=True).split())
+            if txt: yield t.name, txt
 
-# ── load data ──────────────────────────────────────────────────
-if not os.path.exists(CSV_PATH):
-    raise FileNotFoundError("FinalData.csv not found.")
+def extract_lines(html):
+    soup=BeautifulSoup(html,"lxml")
+    main=soup.select_one("#main-content"); _clean(main)
+    lines=[]
+    title=soup.select_one("header[id^='title-'] h1")
+    if title: lines.append((title.text.strip(), *FONT["h1"]))
+    for h in main.find_all(["h2","h3","h4","h5","h6"]):
+        if h.text.strip().lower().startswith("resources"):
+            for x in list(h.find_all_next()): x.decompose(); h.decompose(); break
+    for tag,txt in _yield(main):
+        lines.append(("• "+txt,*BULLET) if tag=="li" else (txt,*FONT.get(tag,DEF_FONT)))
+    return lines
 
-df = pd.read_csv(CSV_PATH)
+# ── PDF utils ─────────────────────────────────────────────
+def write_pdf(lines, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c=Canvas(str(path), pagesize=A4)
+    w,h=A4; x,y=MARGIN,h-MARGIN
+    for txt, font, sz in lines:
+        c.setFont(font,sz)
+        for seg in textwrap.wrap(txt, WRAP) or [""]:
+            if y<MARGIN: c.showPage(); y=h-MARGIN; c.setFont(font,sz)
+            c.drawString(x,y,seg); y-=sz*LINE_SP
+    c.save()
 
-docx_files = [f for f in os.listdir(DOCX_DIR) if f.lower().endswith(".docx")]
-if not docx_files:
-    raise FileNotFoundError("No .docx files found in 'Understanding of learning area/'")
+def pdf_words(p):
+    txt="\n".join(pg.extract_text() or "" for pg in PdfReader(str(p)).pages)
+    return len(WRE.findall(txt))
 
-# ── build new column ───────────────────────────────────────────
-texts = []
-for subj in df["Subject"]:
-    fn = match_docx(subj, docx_files)
-    if fn:
-        full_path = os.path.join(DOCX_DIR, fn)
-        texts.append(extract_docx_text(full_path))
-    else:
-        texts.append("")
+# ── per-row process (unchanged) ──────────────────────────
+def process(d, subj, yr, url):
+    say(f"\n>>> {subj} / {yr}")
+    d.get(url); WebDriverWait(d,PAGE_TIMEOUT).until(ready)
 
-df[NEW_COL] = texts
+    before=d.window_handles.copy()
+    locate_cta(d).click()
+    WebDriverWait(d,WAIT).until(lambda drv: len(drv.window_handles)>len(before))
+    d.switch_to.window(d.window_handles[-1])
+    WebDriverWait(d,PAGE_TIMEOUT).until(lambda drv: SEGMENT in drv.current_url)
+    WebDriverWait(d,PAGE_TIMEOUT).until(ready)
 
-# ── save ───────────────────────────────────────────────────────
-df.to_csv(CSV_PATH, index=False)
-print(f"[{datetime.now(UTC).isoformat(timespec='seconds')}]  "
-      f"FinalData.csv updated – {NEW_COL} column populated.")
+    expand_all(d); time.sleep(.3)
+    lines=extract_lines(d.page_source)
+    pdf=DATA_DIR/slug(subj)/slug(yr)/f"{subj} - Understanding of the learning area.pdf"
+    write_pdf(lines, pdf); wc=pdf_words(pdf)
+    say(f"   PDF → {pdf}  ({wc} words)")
+    d.close(); d.switch_to.window(before[0])
+    return wc
+
+# ── main loop ────────────────────────────────────────────
+def main():
+    if not CSV_FILE.exists(): say("CSV missing"); return
+    df=pd.read_csv(CSV_FILE,dtype=str)
+    if COL not in df.columns: df[COL]=""
+
+    drv=start_drv()
+    try:
+        for i,row in df.iterrows():
+            try:
+                wc=process(drv,row["Subject"],row["Year"],row["URL"])
+                df.at[i,COL]=wc; df.to_csv(CSV_FILE,index=False)
+            except Exception as e:
+                say(f"!! row {i}: {e.__class__.__name__}")
+                traceback.print_exc(limit=1)
+                Path(f"fail_{slug(row['Subject'])}_{slug(row['Year'])}.html")\
+                    .write_text(drv.page_source,"utf-8")
+    finally:
+        drv.quit(); say("\nDone.")
+
+if __name__=="__main__":
+    main()

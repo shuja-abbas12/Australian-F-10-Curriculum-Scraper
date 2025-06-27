@@ -7,3 +7,5 @@ lxml==5.4.0               # use latest version with available pre-built wheels
 PyPDF2==3.0.1             # PDF page counting
 pandas
 python-docx
+weasyprint==61.0          # HTML → PDF (keeps headings/lists)
+reportlab
